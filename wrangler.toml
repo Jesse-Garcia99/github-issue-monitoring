@@ -1,0 +1,8 @@
+name = "solix-sentry-bridge"
+main = "worker.js"
+compatibility_date = "2026-10-07"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+GH_REPO = "owner/repo" # GitHub repo that receives issues, e.g. "acme/api"
+# ISSUE_LABEL = "sentry" # optional: label applied to created issues
