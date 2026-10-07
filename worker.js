@@ -1,4 +1,4 @@
-// solix-sentry-bridge — turns Sentry signals into GitHub issues.
+// github-issue-monitoring — turns Sentry signals into GitHub issues.
 //   email: Sentry alert mail routed via Cloudflare Email Routing (e.g. sentry@alerts.example.com)
 //   fetch: Sentry internal-integration webhook POST /webhook
 // Config:  GH_REPO (var, "owner/repo" — issues are filed here), ISSUE_LABEL (optional var, default "sentry")
@@ -13,7 +13,7 @@ async function gh(env, path, init = {}) {
       Authorization: `Bearer ${env.GITHUB_TOKEN}`,
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "solix-sentry-bridge",
+      "User-Agent": "github-issue-monitoring",
       ...(init.headers || {}),
     },
   });

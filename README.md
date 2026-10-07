@@ -1,4 +1,6 @@
-# solix-sentry-bridge
+# GitHub Issue Monitoring
+
+*by [Solix](https://github.com/Jesse-Garcia99)*
 
 Turn Sentry alerts into GitHub issues — no Sentry Business plan required.
 
@@ -30,8 +32,8 @@ Sentry alert email ──► Email Routing ──► this Worker ──► GitHu
 ### 1. Clone and configure
 
 ```sh
-git clone https://github.com/Jesse-Garcia99/solix-sentry-bridge.git
-cd solix-sentry-bridge
+git clone https://github.com/Jesse-Garcia99/github-issue-monitoring.git
+cd github-issue-monitoring
 ```
 
 Edit `wrangler.toml` — set `GH_REPO` to the repo that should receive issues:
@@ -71,7 +73,7 @@ leaves normal mail untouched.
    (or run: `POST /zones/{zone_id}/email/routing/dns {"name":"alerts.example.com"}`)
 3. **Routes → Custom addresses → Create** — pick an address like
    `sentry@alerts.example.com`, set the action to **Send to Worker**, and select
-   `solix-sentry-bridge`
+   `github-issue-monitoring`
 
 That's the "worker email" — any Sentry mail delivered to it is parsed by this
 worker. Prefer a specific custom address over a catch-all.
