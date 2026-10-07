@@ -2,7 +2,8 @@
 
 *by [Solix](https://github.com/Jesse-Garcia99)*
 
-Turn Sentry alerts into GitHub issues — no Sentry Business plan required.
+Turn Sentry alerts and GitHub Actions failures into GitHub issues — no Sentry
+Business plan required.
 
 Sentry's native "create GitHub issue" alert action is gated behind
 Business/Enterprise plans. This Cloudflare Worker gives you the same result on
@@ -11,11 +12,13 @@ any plan:
 ```
 Sentry alert email ──► Email Routing ──► this Worker ──► GitHub issue
 (or internal-integration webhook ─────────► POST /webhook ──► same path)
+GitHub Actions failure ──► repo/org webhook ──► POST /github ──► same path
 ```
 
 - Parses Sentry alert emails, extracts the `/issues/` link, files a GitHub issue
 - **Deduplicates** — repeat notifications update nothing; the existing issue is found via search
 - Optional direct webhook path (Sentry internal integration) with HMAC-SHA256 signature verification
+- GitHub `workflow_run` webhook turns Actions failures into issues (HMAC-SHA256 verified)
 - Free-tier friendly: Workers + Email Routing cost nothing at this volume
 
 ## What you need
@@ -126,6 +129,39 @@ npx wrangler secret put SENTRY_CLIENT_SECRET
 
 Requests are HMAC-SHA256 verified via the `sentry-hook-signature` header.
 Both transports can run side by side.
+
+## Optional: GitHub Actions failures → issues
+
+Point a GitHub webhook at `https://<your-worker>.<your-subdomain>.workers.dev/github`
+and subscribe it to **Workflow runs** only. A repo webhook covers one repo; an
+**org webhook** (`Settings → Webhooks` on the org, or
+`gh api orgs/ORG/hooks`) covers every repo in it.
+
+```sh
+gh api orgs/ORG/hooks -f name=web -F active=true \
+  -f "config[url]=https://<worker>.<subdomain>.workers.dev/github" \
+  -f "config[content_type]=json" -f "config[secret]=<same value as below>" \
+  -f "events[]=workflow_run"
+```
+
+Set the matching secret — unsigned requests are accepted if it's unset, so set it:
+
+```sh
+npx wrangler secret put GH_WEBHOOK_SECRET
+```
+
+A completed run with conclusion `failure`, `timed_out`, `action_required`, or
+`startup_failure` files an issue in `GH_REPO` titled
+`[CI] owner/repo: <workflow> failure on <branch>`, labeled `ci-failure`
+(override with `CI_ISSUE_LABEL`). Other events and conclusions get a `200
+ignored` so GitHub's delivery log stays green. The issue body links the failing
+run and records the source repo — the token only needs `issues:write` on
+`GH_REPO`, not on every monitored repo.
+
+**CI dedup**: before filing, the worker searches
+`repo:GH_REPO is:issue is:open "ci:owner/repo#<workflow_id>@<branch>" in:body`.
+One open issue per failing workflow+branch; closing it lets the next failure
+file a fresh issue.
 
 ## How dedup works
 

@@ -5,4 +5,5 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 GH_REPO = "owner/repo" # GitHub repo that receives issues, e.g. "acme/api"
-# ISSUE_LABEL = "sentry" # optional: label applied to created issues
+# ISSUE_LABEL = "sentry" # optional: label applied to Sentry issues
+# CI_ISSUE_LABEL = "ci-failure" # optional: label applied to GitHub Actions failure issues

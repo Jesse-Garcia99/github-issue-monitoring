@@ -1,8 +1,11 @@
-// github-issue-monitoring — turns Sentry signals into GitHub issues.
+// github-issue-monitoring — turns Sentry signals and GitHub Actions failures into GitHub issues.
 //   email: Sentry alert mail routed via Cloudflare Email Routing (e.g. sentry@alerts.example.com)
 //   fetch: Sentry internal-integration webhook POST /webhook
-// Config:  GH_REPO (var, "owner/repo" — issues are filed here), ISSUE_LABEL (optional var, default "sentry")
-// Secrets: GITHUB_TOKEN (issues:write on GH_REPO), SENTRY_CLIENT_SECRET (optional, verifies webhooks)
+//          GitHub webhook (workflow_run events) POST /github
+// Config:  GH_REPO (var, "owner/repo" — issues are filed here), ISSUE_LABEL (optional var, default "sentry"),
+//          CI_ISSUE_LABEL (optional var, default "ci-failure")
+// Secrets: GITHUB_TOKEN (issues:write on GH_REPO), SENTRY_CLIENT_SECRET (optional, verifies webhooks),
+//          GH_WEBHOOK_SECRET (optional, verifies GitHub webhooks)
 
 const ISSUE_RE = /https:\/\/[a-z0-9.-]*sentry\.io\/(?:organizations\/[a-z0-9-]+\/)?issues\/(\d+)\/?/g;
 
@@ -51,15 +54,62 @@ function linksOf(text) {
   return [...text.matchAll(ISSUE_RE)].map((m) => ({ issueId: m[1], permalink: m[0] }));
 }
 
-async function verifySignature(request, secret, raw) {
-  const sig = request.headers.get("sentry-hook-signature");
-  if (!sig) return false;
+async function hmacHex(secret, raw) {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
   );
   const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
-  const hex = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return hex === sig;
+  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function verifySignature(request, secret, raw) {
+  const sig = request.headers.get("sentry-hook-signature");
+  return sig ? (await hmacHex(secret, raw)) === sig : false;
+}
+
+const CI_CONCLUSIONS = ["failure", "timed_out", "action_required", "startup_failure"];
+
+async function handleGitHub(request, env) {
+  const raw = await request.text();
+  if (env.GH_WEBHOOK_SECRET) {
+    const sig = request.headers.get("x-hub-signature-256") || "";
+    if (sig !== `sha256=${await hmacHex(env.GH_WEBHOOK_SECRET, raw)}`) {
+      return new Response("bad signature", { status: 401 });
+    }
+  }
+  if (request.headers.get("x-github-event") !== "workflow_run") return new Response("ignored");
+  let payload;
+  try { payload = JSON.parse(raw); } catch { return new Response("bad json", { status: 400 }); }
+  const wr = payload.workflow_run;
+  if (payload.action !== "completed" || !wr || !CI_CONCLUSIONS.includes(wr.conclusion)) {
+    return new Response("ignored");
+  }
+  const repo = (payload.repository && payload.repository.full_name) || "?";
+  const branch = wr.head_branch || "?";
+  const key = `ci:${repo}#${wr.workflow_id}@${branch}`;
+  try {
+    if (!env.GH_REPO) throw new Error("GH_REPO is not set");
+    const q = encodeURIComponent(`repo:${env.GH_REPO} is:issue is:open "${key}" in:body`);
+    const found = await gh(env, `/search/issues?q=${q}`);
+    if (found.total_count > 0) return Response.json({ skipped: true, existing: found.items[0].html_url });
+    const issue = await createIssue(env, {
+      title: `[CI] ${repo}: ${wr.name} ${wr.conclusion} on ${branch}`.slice(0, 240),
+      body: [
+        `GitHub Actions **${wr.name}** finished with **${wr.conclusion}** in \`${repo}\`.`,
+        "",
+        `- Run: ${wr.html_url}`,
+        `- Branch: \`${branch}\``,
+        `- Commit: ${wr.head_sha}`,
+        `- Trigger: ${wr.event}${wr.actor ? ` by ${wr.actor.login}` : ""}`,
+        "",
+        `Key: ${key}`,
+      ].join("\n"),
+      labels: [env.CI_ISSUE_LABEL || "ci-failure"],
+    });
+    return Response.json({ created: issue.html_url });
+  } catch (e) {
+    return new Response(String(e), { status: 502 });
+  }
 }
 
 export default {
@@ -87,6 +137,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/health") return new Response("ok");
+    if (url.pathname === "/github" && request.method === "POST") return handleGitHub(request, env);
     if (url.pathname !== "/webhook" || request.method !== "POST") return new Response("not found", { status: 404 });
     const raw = await request.text();
     if (env.SENTRY_CLIENT_SECRET && !(await verifySignature(request, env.SENTRY_CLIENT_SECRET, raw))) {
